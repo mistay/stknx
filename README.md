@@ -9,11 +9,13 @@ STKNX tranceives all bytes read from KNX bus to its KNX_RX pin and has neither b
   - Read bits by hardware timer (cpu-friendly)
   - minimal ISR (cpu-friendly). For reading databits only one shift and one OR-operations are performed.
 
-## Documents
+## Typical STKNX application circuit
 ![typical stknx typical application circuit, https://www.st.com/resource/en/datasheet/stknx.pdf](images/stknx.png "STKNX typical application")
 
+## KNX TP1 frame
 ![knx tp1 standard frame, https://www.auto.tuwien.ac.at/downloads/knxcalibur/diplomarbeit_fpraus_printed.pdf](images/tp1frame.png "KNX TP1 frame")
 
+## KNX signal coding
 ![knx signal coding, KNX specification, free to download on myknx.org. Copyright 1998 - 2013, KNX Association System Specifications](images/knxsignalcoding.png "KNX signal coding")
 
 ### Tech
