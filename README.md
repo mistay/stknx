@@ -15,6 +15,10 @@ STKNX tranceives all bytes read from KNX bus to its KNX_RX pin and has neither b
 ## KNX TP1 frame
 ![knx tp1 standard frame, https://www.auto.tuwien.ac.at/downloads/knxcalibur/diplomarbeit_fpraus_printed.pdf](images/tp1frame.png "KNX TP1 frame")
 
+
+## KNX TP1 control frame
+![KNX TP1 control frame](images/knx_controlframe_oscilloscope.jpg "KNX TP1 control frame")
+
 ## KNX signal coding
 ![knx signal coding, KNX specification, free to download on myknx.org. Copyright 1998 - 2013, KNX Association System Specifications](images/knxsignalcoding.png "KNX signal coding")
 
