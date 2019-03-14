@@ -18,6 +18,18 @@ STKNX tranceives all bytes read from KNX bus to its KNX_RX pin and has neither b
 ## KNX signal coding
 ![knx signal coding, KNX specification, free to download on myknx.org. Copyright 1998 - 2013, KNX Association System Specifications](images/knxsignalcoding.png "KNX signal coding")
 
+## Schematic PDF
+![Schematic PDF](images/esp32_knx_onewire.pdf "Schematic PDF")
+
+## Schematic STKNX
+![Schematic STKNX](images/schematic_stknx.png "Schematic STKNX")
+
+## Schematic ESP32
+![Schematic ESP32](images/schematic_esp32.png "Schematic ESP32")
+
+## Schematic Levelshifter
+![Schematic Levelshifter](images/schematic_levelshifter.png "Schematic Levelshifter")
+
 ### Tech
 
 This project requires espressif standard ESP-IDF framework. No external Libs needed but requires
