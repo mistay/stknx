@@ -22,7 +22,7 @@ STKNX tranceives all bytes read from KNX bus to its KNX_RX pin and has neither b
 [Schematic PDF](images/esp32_knx_onewire.pdf "Schematic PDF")
 
 ## STKNX / ESP32 board
-[STKNX / ESP32 board](images/stknx_onewire_board_photo.jpg "STKNX / ESP32 board")
+![STKNX / ESP32 board](images/stknx_onewire_board_photo.jpg "STKNX / ESP32 board")
 
 ## Schematic STKNX
 ![Schematic STKNX](images/schematic_stknx.png "Schematic STKNX")
