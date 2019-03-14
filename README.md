@@ -19,7 +19,7 @@ STKNX tranceives all bytes read from KNX bus to its KNX_RX pin and has neither b
 ![knx signal coding, KNX specification, free to download on myknx.org. Copyright 1998 - 2013, KNX Association System Specifications](images/knxsignalcoding.png "KNX signal coding")
 
 ## Schematic PDF
-![Schematic PDF](images/esp32_knx_onewire.pdf "Schematic PDF")
+[Schematic PDF](images/esp32_knx_onewire.pdf "Schematic PDF")
 
 ## Schematic STKNX
 ![Schematic STKNX](images/schematic_stknx.png "Schematic STKNX")
