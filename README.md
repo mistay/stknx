@@ -74,6 +74,9 @@ waiting...
 
 ```
 
+### Credits
+Special Thanks to [Philipp Aigner](https://www.aignerelektronik.at)
+
 License
 ----
 MIT
