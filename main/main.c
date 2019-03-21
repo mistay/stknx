@@ -21,14 +21,61 @@ static xQueueHandle gpio_evt_queue = NULL;
 
 static intr_handle_t s_timer_handle;
 
+
+long micros() { return system_get_time();}
+long millis() { return micros()/1000; }
+
+// function and variables to manage push button signal debounce
+static inline long TimeDeltaDword(long now, long before) { return (long)(now - before); }
+long lastEvent=0;
+           
+
+#define ROUTING_FIELD_PAYLOAD_LENGTH_MASK    0xF// B00001111
+#define KNX_TELEGRAM_LENGTH_OFFSET      8
+
+#define KNX_TELEGRAM_HEADER_SIZE        6
+#define KNX_TELEGRAM_PAYLOAD_MAX_SIZE  16
+#define KNX_TELEGRAM_MIN_SIZE           9
+#define KNX_TELEGRAM_MAX_SIZE          23      
+      
+struct SKnxTelegram {
+    union {
+        unsigned char _telegram[KNX_TELEGRAM_MAX_SIZE]; // byte 0 to 22
+        struct {
+        unsigned char _controlField; // byte 0
+        unsigned char _sourceAddrH;  // byte 1
+        unsigned char _sourceAddrL;  // byte 2
+        unsigned char _targetAddrH;  // byte 3
+        unsigned char _targetAddrL;  // byte 4
+        unsigned char _routing;      // byte 5
+        unsigned char _commandH;     // byte 6
+        unsigned char _commandL;     // byte 7
+        unsigned char _payloadChecksum[KNX_TELEGRAM_PAYLOAD_MAX_SIZE-1]; // byte 8 to 22
+      };
+    };
+};
+
+
+
 #define MAX_FRAMES 1000
 int knxframes[MAX_FRAMES];
 int framecount=0;
+int knxTelegramSize=0;
+int telegramBufferIndex=0;
 
+int knxprinted=0;
 int bits_read=0;
 static void timer_tg0_isr(void* arg)
 {
+    int payloadSize;
     portBASE_TYPE xHigherPriorityTaskWoken;
+
+    long nowTime = (long) micros();
+    if(TimeDeltaDword(nowTime,lastEvent) >= 10000) {
+        framecount=knxprinted=telegramBufferIndex=0;
+    }
+
+    lastEvent=nowTime;
 
     if (bits_read==0) {
         // starbit read. todo: check level
@@ -77,9 +124,6 @@ static void timer_tg0_isr(void* arg)
 
         // move counter to next octet and pause timer.
         framecount++;
-
-        // debug read octet to serial console
-        xQueueSendToFrontFromISR( gpio_evt_queue, &byKeyDown, &xHigherPriorityTaskWoken );
     }
 }
 
@@ -117,9 +161,72 @@ static void IRAM_ATTR gpio_isr_handler(void* arg)
     timer_start(TIMER_GROUP_0, TIMER_0);
 }
 
-int knxframes_printed = 0;
+
+
+int getFrameSize(unsigned char b) {
+
+    // byte 5 is routing byte containing payloadlength
+    int payloadSize = b & ROUTING_FIELD_PAYLOAD_LENGTH_MASK;
+    /*if (payloadSize > KNX_TELEGRAM_PAYLOAD_MAX_SIZE
+        || payloadSize < 1)
+        return 0;*/
+    return KNX_TELEGRAM_LENGTH_OFFSET + payloadSize;  
+}
+
+
+#define EIB_CONTROL_FIELD_PATTERN_MASK  0xD3 // B11010011
+#define EIB_CONTROL_FIELD_VALID_PATTERN  0x90 // B10010000
+
+bool validControlField(unsigned char b) {
+    return (b & EIB_CONTROL_FIELD_PATTERN_MASK) == EIB_CONTROL_FIELD_VALID_PATTERN;
+}
+
+unsigned short GetSourceAddress(struct SKnxTelegram s) {
+  // WARNING : works with little endianness only
+  // The adresses within KNX telegram are big endian
+  unsigned short addr; addr = s._sourceAddrL + (s._sourceAddrH<<8); 
+  return addr;
+}
+
+unsigned short GetTargetAddress(struct SKnxTelegram s)  {
+ // WARNING : endianess sensitive!! Code below is for LITTLE ENDIAN chip
+ // The KNX telegram uses BIG ENDIANNESS (Hight byte placed before Low Byte)
+  unsigned short addr; 
+  addr = s._targetAddrL + (s._targetAddrH<<8); 
+  return addr;
+}
+
+int GetPayloadLength(struct SKnxTelegram s) {
+    return s._routing & ROUTING_FIELD_PAYLOAD_LENGTH_MASK;
+}
+
+unsigned char CalculateChecksum(struct SKnxTelegram s) 
+{
+  unsigned char indexChecksum, xorSum=0;  
+  indexChecksum = KNX_TELEGRAM_HEADER_SIZE + GetPayloadLength(s) + 1;
+  for (unsigned char i = 0; i < indexChecksum ; i++)   xorSum ^= s._telegram[i]; // XOR Sum of all the databytes
+  return (unsigned char)(~xorSum); // Checksum equals 1's complement of databytes XOR sum
+}
+
+unsigned char GetChecksum(struct SKnxTelegram s) 
+{   
+    return (s._payloadChecksum[GetPayloadLength(s) - 1]);
+}
+
+bool IsChecksumCorrect(struct SKnxTelegram s) 
+{ 
+    return (GetChecksum(s)==CalculateChecksum(s));
+}
+
+
+
+struct SKnxTelegram sTelegram;
+//unsigned char telegramBuffer[KNX_TELEGRAM_MAX_SIZE];
+unsigned char* telegramBuffer = &sTelegram._telegram;
+
 static void task_debug_console(void* arg)
 {
+    int i;
     for(;;) {
 
         // not needed. killme.
@@ -127,11 +234,51 @@ static void task_debug_console(void* arg)
 
         if( pdTRUE == xQueueReceive( gpio_evt_queue, &byDummy, portMAX_DELAY) ) 
         {
-            // debug received bytes.
-            for (; knxframes_printed < framecount; knxframes_printed++) {
-                printf("%#2X ", knxframes[knxframes_printed]);
+            for (; knxprinted < framecount; knxprinted++) {
+                telegramBuffer[telegramBufferIndex]=knxframes[knxprinted];
+                printf("%02X ", telegramBuffer[telegramBufferIndex]);
+
+                if (telegramBufferIndex==5) {
+                    knxTelegramSize = getFrameSize(sTelegram._routing);  
+                }
+                telegramBufferIndex++;
             }
+
+            if (telegramBufferIndex>=knxTelegramSize && 
+                telegramBufferIndex!=0 && 
+                knxTelegramSize!=0) {
+                if (validControlField(sTelegram._controlField)){
+                    printf("\nValid control field!\n");
+                } else {
+                    printf("\nERR: invalid control field!\n");
+                }
+
+                printf("Checksum: %s\n", IsChecksumCorrect(sTelegram)?"OK":"wrong");
+                printf("knxTelegram size: %d, (min 9 byte, max 23byte)\n", knxTelegramSize);
+
+                unsigned short w = GetSourceAddress(sTelegram);
+                printf("telegram SourceAddress: %d/%d/%d\n", w/256/8, (w/256)%8, w%256);    
+                w = GetTargetAddress(sTelegram);
+                printf("telegram TargetAddress: %d/%d/%d\n", w/256/8, (w/256)%8, w%256);
+
+                framecount=knxprinted=telegramBufferIndex=0;
+
+                /*framecount=knxprinted=0;
+                knxTelegramSize=0;
+                telegramBufferIndex = 0;*/
+            }
+
+            /*
+            printf("knxTelegramSize: %d\n", knxTelegramSize);  
+
+            // debug received bytes.
+            for (i=0; i < knxTelegramSize; i++) {
+                printf("%02X ", knxframes[i]);
+            }
+            printf("\n");*/
+            
         }
+        
     }
 }
 
@@ -165,7 +312,18 @@ void app_main()
     timer_tg0_init();
 
     while(1) {
-        printf("waiting...\n");
-        vTaskDelay(2000 / portTICK_RATE_MS);
+        //printf("waiting...\n");
+        vTaskDelay(100 / portTICK_RATE_MS);
+
+
+        long nowTime = (long) micros();
+        if(TimeDeltaDword(nowTime,lastEvent) >= 10000) {
+           // debug read octet to serial console
+             //dummy, killme.
+            int byKeyDown = 0;
+
+            portBASE_TYPE xHigherPriorityTaskWoken;
+            xQueueSendToFrontFromISR( gpio_evt_queue, &byKeyDown, &xHigherPriorityTaskWoken );
+        }
     }
 }
