@@ -65,6 +65,10 @@ int telegramBufferIndex=0;
 
 int knxprinted=0;
 int bits_read=0;
+int parity_bit=0, stop_bit=0;
+int data_byte =0;
+int calc_parity = 0;
+
 static void timer_tg0_isr(void* arg)
 {
     int payloadSize;
@@ -82,10 +86,9 @@ static void timer_tg0_isr(void* arg)
 
         // reading w/ 9600baud. 1/9600*1000*1000 is about 104
         timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, 104);
-        knxframes[framecount]=0;
-    }
-
-    if (bits_read >= 1) {
+        data_byte=0;
+        calc_parity=1;
+    } else if (bits_read >= 1 && bits_read <=8) {
         // databits
 
         // for debugging w/ oscilloscope
@@ -96,35 +99,40 @@ static void timer_tg0_isr(void* arg)
         bit = bit == 1 ? 0 : 1; // invert. knx sends 1 as logic 0 and vice-versa, see knx spec
 
         // first bit read is LSB. last bit is MSB. we read octets (8 bits)
-        knxframes[framecount] = knxframes[framecount] >> 1;
-        knxframes[framecount] |=  bit<<7;
-    }
+        data_byte = data_byte >> 1;
+        data_byte |=  bit<<7;
+        
+        if (bit)
+            calc_parity = !calc_parity;
 
-    // restart timer
-    TIMERG0.int_clr_timers.t0 = 1;
-    TIMERG0.hw_timer[0].config.alarm_en = 1;
-
-    if (++bits_read==9) {
+     // read for parity and stop bit
+    } else if (bits_read==9) {
+        parity_bit = gpio_get_level(GPIO_INPUT_IO_0);
+    } else if (bits_read==10) {
+        stop_bit = gpio_get_level(GPIO_INPUT_IO_0);
+    } else {
         // all bits read.
+        // move counter to next octet and pause timer.
+        // check parity bit
+        if (calc_parity==parity_bit)
+            knxframes[framecount++] = data_byte;
         
         // pause timer and wait for new startbit. this triggers a new interrupt that will reenable the timer
         timer_pause(TIMER_GROUP_0, TIMER_0);
 
         // reenable interrupts for next startbit
         gpio_intr_enable(GPIO_INPUT_IO_0);
+    }
 
+    if (bits_read == 11) {
         // prepare next octet
         bits_read=0;
-
-        // knx has a 30ms high-level. move timer half bit-time foreward and try to read in "the middle"
-        timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, 15);
-
-        //dummy, killme.
-        int byKeyDown = 0;
-
-        // move counter to next octet and pause timer.
-        framecount++;
+    } else {
+        bits_read++;
     }
+    // restart timer
+    TIMERG0.int_clr_timers.t0 = 1;
+    TIMERG0.hw_timer[0].config.alarm_en = 1;
 }
 
 void timer_tg0_init()
@@ -141,7 +149,6 @@ void timer_tg0_init()
     timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
     timer_enable_intr(TIMER_GROUP_0, TIMER_0);
     timer_isr_register(TIMER_GROUP_0, TIMER_0, &timer_tg0_isr, NULL, 0, &s_timer_handle);
-
 }
 
 
@@ -152,12 +159,17 @@ void timer_tg0_init()
 // interrupt that is triggered on each rising edge on knx read
 static void IRAM_ATTR gpio_isr_handler(void* arg)
 {
-    // assuming starbit
+    // assuming startbit
 
     // weitere interpretationen eines startbits verhindern
     gpio_intr_disable(GPIO_INPUT_IO_0);
 
-    // kurz warten (30us) um in die mitte der bits zu kommen
+    // kurz warten (35us/2) um in die mitte der bits zu kommen
+    // start timer
+    TIMERG0.int_clr_timers.t0 = 1;
+    TIMERG0.hw_timer[0].config.alarm_en = 1;
+     // read all data bits in the midddle of the zero : 35/2
+    timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, 17);
     timer_start(TIMER_GROUP_0, TIMER_0);
 }
 
@@ -234,6 +246,8 @@ static void task_debug_console(void* arg)
 
         if( pdTRUE == xQueueReceive( gpio_evt_queue, &byDummy, portMAX_DELAY) ) 
         {
+            if (knxprinted != framecount)
+                printf("last byte: p: %i =?= %i, s: %i\n", parity_bit, calc_parity, stop_bit);
             for (; knxprinted < framecount; knxprinted++) {
                 telegramBuffer[telegramBufferIndex]=knxframes[knxprinted];
                 printf("%02X ", telegramBuffer[telegramBufferIndex]);
@@ -241,8 +255,10 @@ static void task_debug_console(void* arg)
                 if (telegramBufferIndex==5) {
                     knxTelegramSize = getFrameSize(sTelegram._routing);  
                 }
+
                 telegramBufferIndex++;
             }
+            
 
             if (telegramBufferIndex>=knxTelegramSize && 
                 telegramBufferIndex!=0 && 
@@ -260,6 +276,13 @@ static void task_debug_console(void* arg)
                 printf("telegram SourceAddress: %d/%d/%d\n", w/256/8, (w/256)%8, w%256);    
                 w = GetTargetAddress(sTelegram);
                 printf("telegram TargetAddress: %d/%d/%d\n", w/256/8, (w/256)%8, w%256);
+
+                printf("telegram payload: ");
+
+                for (i=0; i < GetPayloadLength(sTelegram); i++) {
+                    printf("%c ", sTelegram._payloadChecksum[i]);
+                }
+                printf("\n");
 
                 framecount=knxprinted=telegramBufferIndex=0;
 
@@ -307,6 +330,7 @@ void app_main()
 
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
     gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0);
+    
 
     // knx rx timer
     timer_tg0_init();
