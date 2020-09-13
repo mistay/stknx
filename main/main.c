@@ -94,8 +94,8 @@ static void isr_knx_tx_timer(void* arg)
     if (tmp_sendbyte > SENDBUFFER_LEN) {
         // frame done.
 
-        // wait x2 bytes
-        bits_send=-30;
+        // wait "some" bits
+        bits_send=-30;  // determined empirically
         tmp_sendbyte = 0;
         sendcount++;
     }
@@ -282,18 +282,21 @@ static void task_knxrx(void* arg)
             
             uint8_t tmp=0;
             int horizontal_parity=-1;
-            for ( int i=index_octets_processed; i<MAX_OCTETS; i++ ) {
+            for ( int i=index_octets_processed; i<MAX_OCTETS+index_octets_processed; i++ ) {
 
+                // simple ringbuffer
+                int j=i; if (i>=MAX_OCTETS) j=i-MAX_OCTETS;
+                
                 // start of KNX TP1 Frame
-                if ((octets[i] & 0xD3) == 0x90) // e.g. 0xbc
-                    index_start_frame = i;
+                if ((octets[j] & 0xD3) == 0x90) // e.g. 0xbc
+                    index_start_frame = j;
 
 
                 if (index_start_frame >= 0) {
-                    tmp ^= octets[i];
+                    tmp ^= octets[j];
 
-                    if ( (~tmp & 0xFF) == octets[i] ) {
-                        index_end_frame=i;
+                    if ( (~tmp & 0xFF) == octets[j] ) {
+                        index_end_frame=j;
                         horizontal_parity = ~tmp;
                         break;
                     }
