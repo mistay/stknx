@@ -452,14 +452,16 @@ void app_main()
 
     printf("waiting for KNX frames ...\n");
     long uptime = 0;
+
+    int delay = 5000;
     while(1) {
-        vTaskDelay(5000 / portTICK_RATE_MS);
+        vTaskDelay(delay / portTICK_RATE_MS);
         uptime++;
 
-        int sec = ( uptime * 5000 / 1000 / 1 ) % 60;
-        int min = ( uptime * 5000 / 1000 / 60 ) % 60;
-        int hour = ( uptime * 5000 / 1000 / 60 / 60 ) % 60;
-        int day = ( uptime * 5000 / 1000 / 60 / 60 / 24 ) % 24;
+        int sec = ( uptime * delay / 1000 / 1 ) % 60;
+        int min = ( uptime * delay / 1000 / 60 ) % 60;
+        int hour = ( uptime * delay / 1000 / 60 / 60 ) % 60;
+        int day = ( uptime * delay / 1000 / 60 / 60 / 24 ) % 24;
 
         printf("heap_caps_get_free_size %dbytes uptime:%ddays %dh %d' %d\" ...\n", heap_caps_get_free_size(MALLOC_CAP_8BIT), day, hour, min, sec);
     }
