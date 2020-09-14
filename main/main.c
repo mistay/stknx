@@ -36,7 +36,8 @@ static intr_handle_t s_timer_handle_knxtx;
 
 #define MAX_OCTETS 1000
 int octets[MAX_OCTETS];
-int current_octet=0;
+int octet_write_index=0;
+int octet_read_index = 0;
 
 int bits_read=0;
 int startbit_level=-1;
@@ -48,7 +49,6 @@ int sendcount=0;
 int tmp_sendbyte=0;
 int waitcount=0;
 int octets_printed = 0;
-int index_octets_processed = 0;
 int timercount=0;
 
 
@@ -160,7 +160,7 @@ static void isr_knx_rx_timer(void* arg)
 
         // reading w/ 9600baud. 1/9600*1000*1000 is about 104
         timer_group_set_alarm_value_in_isr(TIMER_GROUP_0, TIMER_0, 104);
-        octets[current_octet]=0;
+        octets[octet_write_index]=0;
     }
 
     // databits
@@ -172,8 +172,8 @@ static void isr_knx_rx_timer(void* arg)
 
         // first bit read is LSB. last bit is MSB. we read octets (8 bits)
         // knx databits: lsb first, msb last.
-        octets[current_octet] = octets[current_octet] >> 1;
-        octets[current_octet] |=  bit<<7;
+        octets[octet_write_index] = octets[octet_write_index] >> 1;
+        octets[octet_write_index] |=  bit<<7;
     }
 
     if (bits_read==9) {
@@ -206,7 +206,8 @@ static void isr_knx_rx_timer(void* arg)
         //dummy, killme.
         int byKeyDown = 0;
 
-        current_octet++;
+        octet_write_index++;
+        octet_write_index %= MAX_OCTETS;
 
         // debug read octet to serial console
         xQueueSendToFrontFromISR( queue_knxrx, &byKeyDown, &xHigherPriorityTaskWoken );
@@ -276,16 +277,19 @@ static void task_knxrx(void* arg)
         if( pdTRUE == xQueueReceive( queue_knxrx, &byDummy, portMAX_DELAY) ) 
         {
             // print received bytes.
-            for (; octets_printed < current_octet; octets_printed++) {
-                printf("%02x ", octets[octets_printed]);
-            }
+            //for (; octets_printed < current_octet; octets_printed++) {
+            //    printf("%02x ", octets[octets_printed]);
+            //}
             
             uint8_t tmp=0;
             int horizontal_parity=-1;
-            for ( int i=index_octets_processed; i<MAX_OCTETS+index_octets_processed; i++ ) {
+            for ( int i = octet_read_index; i < MAX_OCTETS + octet_read_index; i++ ) {
 
                 // simple ringbuffer
-                int j=i; if (i>=MAX_OCTETS) j=i-MAX_OCTETS;
+                int j = i % MAX_OCTETS;
+
+                if (j == octet_write_index)
+                    break;
                 
                 // start of KNX TP1 Frame
                 if ((octets[j] & 0xD3) == 0x90) // e.g. 0xbc
@@ -304,7 +308,7 @@ static void task_knxrx(void* arg)
             }
 
             if (index_start_frame>0 && index_end_frame>0) {
-                index_octets_processed = index_end_frame;
+                octet_read_index = index_end_frame;
 
                 struct KNX_TP1_Frame *frame = malloc(sizeof *frame);
                 frame -> control_r =        (octets[index_start_frame + 0] & 0x20) > 0;
@@ -331,6 +335,23 @@ static void task_knxrx(void* arg)
                 }
 
                 free(frame);
+
+/*                printf("[found KNX frame: %d/%d %d-%d  %d.%d.%d to %d.%d.%d ]\n",
+                    octet_read_index,
+                    octet_write_index,
+                    index_start_frame,
+                    index_end_frame,
+
+                    (octets[index_start_frame + 1] & 0xF0) >> 4,
+                    (octets[index_start_frame + 1] & 0x0F) >> 0,
+                    octets[index_start_frame + 2],
+                    
+                    (octets[index_start_frame + 3] & 0xF0) >> 4,
+                    (octets[index_start_frame + 3] & 0x0F) >> 0,
+                    octets[index_start_frame + 4]
+
+                    );*/
+
             }
         }
     }
@@ -466,6 +487,6 @@ void app_main()
         int hour = ( uptime * delay / 1000 / 60 / 60 ) % 60;
         int day = ( uptime * delay / 1000 / 60 / 60 / 24 ) % 24;
 
-        printf("heap_caps_get_free_size %dbytes uptime:%ddays %dh %d' %d\" ...\n", heap_caps_get_free_size(MALLOC_CAP_8BIT), day, hour, min, sec);
+        printf("heap_caps_get_free_size %dbytes read:%d write:%d uptime:%ddays %dh %d' %d\" ...\n", heap_caps_get_free_size(MALLOC_CAP_8BIT), octet_read_index, octet_write_index, day, hour, min, sec);
     }
 }
