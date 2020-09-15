@@ -10,10 +10,11 @@ typedef struct KNX_TP1_Frame {
     unsigned char srcI;  
     unsigned char dstZ;  
     unsigned char dstL;  
-    unsigned char dstI;  
+    unsigned char dstI;
     unsigned char destination_address_flag;  
     unsigned char routing_counter;
     unsigned char length;
+    unsigned char first_databyte;
     unsigned char checksum;
 } KNX_TP1_Frame;
 

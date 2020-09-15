@@ -63,6 +63,14 @@ void blink_all_leds() {
 }
 
 void knx_frame_received(KNX_TP1_Frame frame) {
+    gpio_set_level(PIN_LED_6_KNX_RXTX, 1);
+    vTaskDelay(20 / portTICK_RATE_MS);
+    gpio_set_level(PIN_LED_6_KNX_RXTX, 0);
+
+    if (frame.dstZ == 5 && frame.dstL == 9 && frame.dstI == 3) {
+        gpio_set_level(PIN_LED_4_CLONE_LIGHT, frame.first_databyte & 0x1);
+    }
+    
 
     printf("->main->KNX TP1 FRAME: [");
     
