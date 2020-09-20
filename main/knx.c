@@ -1,3 +1,4 @@
+#include "knx.h"
 #include "freertos/FreeRTOS.h"
 #include <stdio.h>
 #include <string.h>
@@ -11,7 +12,6 @@
 #include "driver/periph_ctrl.h"
 #include "driver/timer.h"
 #include "esp_log.h"
-#include "knx_tp1_frame.h"
 #include "esp_heap_caps.h"
 
 #define PIN_KNX_RX                      17
@@ -45,14 +45,26 @@ int timercount=0;
 
 void (*func_knx_frame_received)(KNX_TP1_Frame frame);
 
-unsigned char calc_even_parity_bit(unsigned char x){
+
+static void isr_knx_tx_timer(void* arg);
+static void isr_knx_rx_timer(void* arg);
+static void init_knx_tx_timer();
+static void init_knx_rx_timer();
+static void IRAM_ATTR gpio_isr_handler(void* arg);
+static void task_knxrx(void* arg);
+static void task_knxtx(void* arg);
+static void task_knx_send(void* arg);
+static void setup_knx_rx_pin();
+static void setup_knx_tx_pin();
+
+static unsigned char calc_even_parity_bit(unsigned char x){
     unsigned int count = 0, i, b = 1;
     for(i = 0; i < 8; i++)
         if( x & (b << i) ){count++;}
     return (count % 2);
 }
 
-unsigned char calc_odd_horizontal_parity_byte(int len, unsigned char* data) {
+static unsigned char calc_odd_horizontal_parity_byte(int len, unsigned char* data) {
     int tmp=0;
     for ( int i=0; i<len; i++ )
         tmp ^= data[i];
@@ -60,9 +72,9 @@ unsigned char calc_odd_horizontal_parity_byte(int len, unsigned char* data) {
 }
 
 #define SENDBUFFER_LEN 8
-unsigned char sendbuffer[100] = {
+static unsigned char sendbuffer[100] = {
     0xBC, // knx control byte
-    0x12, 0x03, 0x58, 0x03, 0xE1, 0x00, 0x81, 
+    0x12, 0x03, 0x58, 0x03, 0xE1, 0x00, 0x81,
     0x69 // knx checksum calc_odd_horizontal_parity_byte()
     };
 
@@ -120,7 +132,7 @@ static void isr_knx_tx_timer(void* arg)
     if (bits_send > 10)   {
         bits_send=-2;
         tmp_sendbyte++;
-    } 
+    }
 
     if (false)
     {
@@ -148,11 +160,17 @@ static void isr_knx_rx_timer(void* arg)
     //gpio_set_level(PIN_LED_2_DEBUG_OSCILLOSCOPE, ++toggle % 2);
 
     // starbit
-    if (bits_read==0) { 
+    if (bits_read==0) {
         startbit_level = gpio_get_level(PIN_KNX_RX);
 
         // reading w/ 9600baud. 1/9600*1000*1000 is about 104
+
+#ifdef _IDF_VERSION
+        timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, 104);
+#else
         timer_group_set_alarm_value_in_isr(TIMER_GROUP_0, TIMER_0, 104);
+#endif
+
         octets[octet_write_index]=0;
     }
 
@@ -194,7 +212,11 @@ static void isr_knx_rx_timer(void* arg)
         bits_read=-1;
 
         // stknx signals 30ms high-level. move timer half bit-time foreward and try to read in "the middle"
+#ifdef _IDF_VERSION
+        timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, KNX_HALF_BIT_TIME_MS);
+#else
         timer_group_set_alarm_value_in_isr(TIMER_GROUP_0, TIMER_0, KNX_HALF_BIT_TIME_MS);
+#endif
 
         //dummy, killme.
         int byKeyDown = 0;
@@ -209,7 +231,7 @@ static void isr_knx_rx_timer(void* arg)
     bits_read++;
 }
 
-void init_knx_tx_timer()
+static void init_knx_tx_timer()
 {
     timer_config_t config = {
             .alarm_en = TIMER_ALARM_EN,			//Alarm Enable
@@ -228,7 +250,7 @@ void init_knx_tx_timer()
     timer_enable_intr(TIMER_GROUP_1, TIMER_1);
 }
 
-void init_knx_rx_timer()
+static void init_knx_rx_timer()
 {
     timer_config_t config = {
             .alarm_en = TIMER_ALARM_EN,			//Alarm Enable
@@ -267,13 +289,13 @@ static void task_knxrx(void* arg)
         int index_start_frame=-1;
         int index_end_frame=-1;
 
-        if( pdTRUE == xQueueReceive( queue_knxrx, &byDummy, portMAX_DELAY) ) 
+        if( pdTRUE == xQueueReceive( queue_knxrx, &byDummy, portMAX_DELAY) )
         {
             // print received bytes.
             //for (; octets_printed < current_octet; octets_printed++) {
             //    printf("%02x ", octets[octets_printed]);
             //}
-            
+
             uint8_t tmp=0;
             int horizontal_parity=-1;
             for ( int i = octet_read_index; i < MAX_OCTETS + octet_read_index; i++ ) {
@@ -283,7 +305,7 @@ static void task_knxrx(void* arg)
 
                 if (j == octet_write_index)
                     break;
-                
+
                 // start of KNX TP1 Frame
                 if ((octets[j] & 0xD3) == 0x90) // e.g. 0xbc
                     index_start_frame = j;
@@ -323,7 +345,7 @@ static void task_knxrx(void* arg)
                 vTaskDelay(20 / portTICK_RATE_MS);
                 gpio_set_level(PIN_LED_6_KNX_RXTX, 0);
                 */
-                
+
                 debug_knx_tp1_frame(*frame);
 /*
                 if (frame -> dstZ == 5 && frame -> dstL == 9 && frame -> dstI == 3) {
@@ -341,7 +363,7 @@ static void task_knxrx(void* arg)
                     (octets[index_start_frame + 1] & 0xF0) >> 4,
                     (octets[index_start_frame + 1] & 0x0F) >> 0,
                     octets[index_start_frame + 2],
-                    
+
                     (octets[index_start_frame + 3] & 0xF0) >> 4,
                     (octets[index_start_frame + 3] & 0x0F) >> 0,
                     octets[index_start_frame + 4]
@@ -359,7 +381,7 @@ static void task_knxtx(void* arg)
         // not needed. killme.
         int byDummy=0;
 
-        if( pdTRUE == xQueueReceive( queue_knxtx, &byDummy, portMAX_DELAY) ) 
+        if( pdTRUE == xQueueReceive( queue_knxtx, &byDummy, portMAX_DELAY) )
         {
             //printf("task_knxtx...\n");
         }
@@ -378,7 +400,7 @@ static void task_knx_send(void* arg)
     }
 }
 
-void setup_knx_rx_pin() {
+static void setup_knx_rx_pin() {
     gpio_config_t io_conf;
 
     io_conf.intr_type = GPIO_PIN_INTR_POSEDGE;
@@ -389,7 +411,7 @@ void setup_knx_rx_pin() {
     gpio_config(&io_conf);
 }
 
-void setup_knx_tx_pin() {
+static void setup_knx_tx_pin() {
     gpio_config_t io_conf;
 
     io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
