@@ -1,4 +1,4 @@
-#include "knx.h"
+#include "stknx.h"
 #include "freertos/FreeRTOS.h"
 #include <stdio.h>
 #include <string.h>
@@ -27,7 +27,7 @@ static intr_handle_t s_timer_handle_knxrx;
 static intr_handle_t s_timer_handle_knxtx;
 
 #define MAX_OCTETS 1000
-int octets[MAX_OCTETS];
+unsigned char octets[MAX_OCTETS];
 int octet_write_index=0;
 int octet_read_index = 0;
 
@@ -43,7 +43,7 @@ int waitcount=0;
 int octets_printed = 0;
 int timercount=0;
 
-void (*func_knx_frame_received)(KNX_TP1_Frame frame);
+void (*func_knx_frame_received)(KnxTelegram &telegram);
 
 
 static void isr_knx_tx_timer(void* arg);
@@ -88,7 +88,7 @@ static void isr_knx_tx_timer(void* arg)
 
     waitcount++;
     if (waitcount == 2) {
-        gpio_set_level(PIN_KNX_TX, 0);
+        gpio_set_level((gpio_num_t)PIN_KNX_TX, 0);
         return;
     }
     if (waitcount == 3) {
@@ -112,17 +112,17 @@ static void isr_knx_tx_timer(void* arg)
     char octet = sendbuffer[tmp_sendbyte];
 
     if (bits_send == 0) {
-        gpio_set_level(PIN_KNX_TX, 1);
+        gpio_set_level((gpio_num_t)PIN_KNX_TX, 1);
     }
 
     if (bits_send > 0 && bits_send < 9)
-        gpio_set_level(PIN_KNX_TX, (~octet >> (bits_send-1)) & 0x1);
+        gpio_set_level((gpio_num_t)PIN_KNX_TX, (~octet >> (bits_send-1)) & 0x1);
 
     if (bits_send == 9)
-        gpio_set_level(PIN_KNX_TX, calc_even_parity_bit(octet) == 0 ? 1 : 0);
+        gpio_set_level((gpio_num_t)PIN_KNX_TX, calc_even_parity_bit(octet) == 0 ? 1 : 0);
 
     if (bits_send == 10)
-        gpio_set_level(PIN_KNX_TX, 0);
+        gpio_set_level((gpio_num_t)PIN_KNX_TX, 0);
 
 
     //dummy, killme.
@@ -144,7 +144,7 @@ static void isr_knx_tx_timer(void* arg)
 
     bits_send++;
 
-    return 0;
+    return;
 }
 
 
@@ -161,7 +161,7 @@ static void isr_knx_rx_timer(void* arg)
 
     // starbit
     if (bits_read==0) {
-        startbit_level = gpio_get_level(PIN_KNX_RX);
+        startbit_level = gpio_get_level((gpio_num_t)PIN_KNX_RX);
 
         // reading w/ 9600baud. 1/9600*1000*1000 is about 104
 
@@ -178,7 +178,7 @@ static void isr_knx_rx_timer(void* arg)
     if (bits_read >= 1 && bits_read <= 8) {
 
         // read knx bit
-        int bit = gpio_get_level(PIN_KNX_RX);
+        int bit = gpio_get_level((gpio_num_t)PIN_KNX_RX);
         bit = bit == 1 ? 0 : 1; // invert. knx sends 1 as logic 0 and vice-versa, see knx spec
 
         // first bit read is LSB. last bit is MSB. we read octets (8 bits)
@@ -188,7 +188,7 @@ static void isr_knx_rx_timer(void* arg)
     }
 
     if (bits_read==9) {
-        paritybit = gpio_get_level(PIN_KNX_RX);
+        paritybit = gpio_get_level((gpio_num_t)PIN_KNX_RX);
         paritybit = paritybit == 1 ? 0 : 1; // invert. knx sends 1 as logic 0 and vice-versa, see knx spec
     }
 
@@ -196,8 +196,8 @@ static void isr_knx_rx_timer(void* arg)
     if (bits_read==10) {
         // all bits read.
 
-        stopbit_level = gpio_get_level(PIN_KNX_RX);
-        
+        stopbit_level = gpio_get_level((gpio_num_t)PIN_KNX_RX);
+
         // pause timer and wait for new startbit. this triggers a new interrupt that will reenable the timer
 
         timer_config_t config;
@@ -206,7 +206,7 @@ static void isr_knx_rx_timer(void* arg)
             timer_pause(TIMER_GROUP_0, TIMER_0);
 
         // reenable interrupts for next startbit
-        gpio_intr_enable(PIN_KNX_RX);
+        gpio_intr_enable((gpio_num_t)PIN_KNX_RX);
 
         // prepare next octet
         bits_read=-1;
@@ -273,11 +273,20 @@ static void IRAM_ATTR gpio_isr_handler(void* arg)
     // assuming starbit
 
     // process octet, this isr will be re-enabled within timer isr
-    gpio_intr_disable(PIN_KNX_RX);
+    gpio_intr_disable((gpio_num_t)PIN_KNX_RX);
 
     // wait about 15us, will be reconfigured to 104us within timer isr
     timer_start(TIMER_GROUP_0, TIMER_0);
 }
+
+
+#define ROUTING_FIELD_PAYLOAD_LENGTH_MASK      0x00001111
+
+unsigned int payload_length(struct KNX_TP1_Frame *frame)
+{
+    return (frame->routing_counter & ROUTING_FIELD_PAYLOAD_LENGTH_MASK);
+}
+
 
 static void task_knxrx(void* arg)
 {
@@ -325,7 +334,19 @@ static void task_knxrx(void* arg)
             if (index_start_frame>0 && index_end_frame>0) {
                 octet_read_index = index_end_frame;
 
-                struct KNX_TP1_Frame *frame = malloc(sizeof *frame);
+                KnxTelegram telegram;
+                for (byte i=0; i<8; i++)
+                    telegram.WriteRawByte(octets[index_start_frame+i], i);
+
+                if (telegram.IsChecksumCorrect()) {
+                    telegram.SetLongPayload(
+                        &octets[index_end_frame+1-telegram.GetPayloadLength()],
+                        telegram.GetPayloadLength());
+                }
+
+                func_knx_frame_received(telegram);
+
+                /*struct KNX_TP1_Frame *frame = malloc(sizeof(*frame));
                 frame -> control_r =        (octets[index_start_frame + 0] & 0x20) > 0;
                 frame -> priority =         (octets[index_start_frame + 0] & 0xC) >> 2;
                 frame -> srcZ =             (octets[index_start_frame + 1] & 0xF0) >> 4;
@@ -337,22 +358,24 @@ static void task_knxrx(void* arg)
                 frame -> destination_address_flag = (octets[index_start_frame + 5] & 0x80) > 0;
                 frame -> routing_counter = (octets[index_start_frame + 5] & 0x70) >> 4;
                 frame -> length =           (octets[index_start_frame + 5] & 0x0F);
-                frame -> checksum =         octets[index_end_frame];
+                //frame -> checksum =         octets[index_end_frame];
+                //checksum is at payload_length(frame)-1;
+                memcpy(frame -> payloadChecksum, &octets[index_end_frame+1-payload_length(frame)], payload_length(frame));
 
-                //func_knx_frame_received(*frame);
+                func_knx_frame_received(frame);*/
 /*
                 gpio_set_level(PIN_LED_6_KNX_RXTX, 1);
                 vTaskDelay(20 / portTICK_RATE_MS);
                 gpio_set_level(PIN_LED_6_KNX_RXTX, 0);
                 */
 
-                debug_knx_tp1_frame(*frame);
+                //debug_knx_tp1_frame(*frame);
 /*
                 if (frame -> dstZ == 5 && frame -> dstL == 9 && frame -> dstI == 3) {
                     gpio_set_level(PIN_LED_4_CLONE_LIGHT, octets[index_start_frame + 7] & 0x1);
                 }*/
 
-                free(frame);
+                //free(frame);
 
 /*                printf("[found KNX frame: %d/%d %d-%d  %d.%d.%d to %d.%d.%d ]\n",
                     octet_read_index,
@@ -403,10 +426,10 @@ static void task_knx_send(void* arg)
 static void setup_knx_rx_pin() {
     gpio_config_t io_conf;
 
-    io_conf.intr_type = GPIO_PIN_INTR_POSEDGE;
+    io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_POSEDGE;
     io_conf.pin_bit_mask = 1ULL << PIN_KNX_RX;
     io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pull_up_en = 1;
+    io_conf.pull_up_en = (gpio_pullup_t)1;
 
     gpio_config(&io_conf);
 }
@@ -414,16 +437,17 @@ static void setup_knx_rx_pin() {
 static void setup_knx_tx_pin() {
     gpio_config_t io_conf;
 
-    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+    io_conf.intr_type = (gpio_int_type_t)GPIO_PIN_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
     io_conf.pin_bit_mask = 1ULL << PIN_KNX_TX;
-    io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 0;
+    io_conf.pull_down_en = (gpio_pulldown_t)0;
+    io_conf.pull_up_en = (gpio_pullup_t)0;
 
     gpio_config(&io_conf);
 }
 
-void setup_knx_reading(void (*knx_frame_received)(KNX_TP1_Frame frame)) {
+void setup_knx_reading(void (*knx_frame_received)(KnxTelegram &telegram))
+{
     func_knx_frame_received = knx_frame_received;
 
     setup_knx_rx_pin();
@@ -435,7 +459,7 @@ void setup_knx_reading(void (*knx_frame_received)(KNX_TP1_Frame frame)) {
 
     // rising edge indicates knx startbit
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
-    gpio_isr_handler_add(PIN_KNX_RX, gpio_isr_handler, (void*) PIN_KNX_RX);
+    gpio_isr_handler_add((gpio_num_t)PIN_KNX_RX, gpio_isr_handler, (void*) PIN_KNX_RX);
 }
 
 void setup_knx_writing() {

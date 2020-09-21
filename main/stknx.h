@@ -3,6 +3,7 @@
 #ifndef STKNX_H
 #define STKNX_H
 
+#include <KnxTelegram.h>
 #include "knx_tp1_frame.h"
 
 #ifdef __cplusplus
@@ -19,9 +20,10 @@ extern "C"
 
 #define MAX_OCTETS 1000
 
-//#define _IDF_VERSION "V.3.2"
+#define _IDF_VERSION "V.3.2"
 
-void setup_knx_reading(void (*knx_frame_received)(KNX_TP1_Frame frame));
+//void setup_knx_reading(void (*knx_frame_received)(KNX_TP1_Frame *frame));
+void setup_knx_reading(void (*knx_frame_received)(KnxTelegram &telegram));
 void setup_knx_writing();
 
 #ifdef __cplusplus

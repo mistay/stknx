@@ -1,0 +1,3 @@
+[submodule "components/KnxDevice/KnxDevice"]
+	path = components/KnxDevice/KnxDevice
+	url = https://github.com/mrxa13/KnxDevice

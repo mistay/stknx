@@ -1,0 +1,4 @@
+
+COMPONENT_ADD_INCLUDEDIRS :=  KnxDevice/
+COMPONENT_SRCDIRS := KnxDevice/
+

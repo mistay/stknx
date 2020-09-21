@@ -1,0 +1,26 @@
+diff --git a/libraries/WiFi/src/ETH.cpp b/libraries/WiFi/src/ETH.cpp
+index c3379104..3f5143e2 100644
+--- a/libraries/WiFi/src/ETH.cpp
++++ b/libraries/WiFi/src/ETH.cpp
+@@ -113,7 +113,7 @@ bool ETHClass::config(IPAddress local_ip, IPAddress gateway, IPAddress subnet, I
+ {
+     esp_err_t err = ESP_OK;
+     tcpip_adapter_ip_info_t info;
+-	
++
+     if(local_ip != (uint32_t)0x00000000){
+         info.ip.addr = static_cast<uint32_t>(local_ip);
+         info.gw.addr = static_cast<uint32_t>(gateway);
+diff --git a/libraries/WiFi/src/WiFiSTA.cpp b/libraries/WiFi/src/WiFiSTA.cpp
+index 5d858d6c..b80ed013 100644
+--- a/libraries/WiFi/src/WiFiSTA.cpp
++++ b/libraries/WiFi/src/WiFiSTA.cpp
+@@ -424,7 +424,7 @@ IPAddress WiFiSTAClass::localIP()
+ uint8_t* WiFiSTAClass::macAddress(uint8_t* mac)
+ {
+     if(WiFiGenericClass::getMode() != WIFI_MODE_NULL){
+-        esp_wifi_get_mac(WIFI_IF_STA, mac);	
++        esp_wifi_get_mac(WIFI_IF_STA, mac);
+     }
+     else{
+         esp_read_mac(mac, ESP_MAC_WIFI_STA);
