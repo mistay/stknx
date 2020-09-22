@@ -13,6 +13,7 @@
 #include "driver/timer.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 
 #define PIN_KNX_RX                      17
 #define PIN_KNX_TX                      16
@@ -22,6 +23,11 @@
 
 static xQueueHandle queue_knxrx = NULL;
 static xQueueHandle queue_knxtx = NULL;
+
+#define STKNX_LOOP_STACK 8192
+#define STKNX_CORE 1
+static TaskHandle_t knxRxHandle = NULL;
+static TaskHandle_t knxTxHandle = NULL;
 
 static intr_handle_t s_timer_handle_knxrx;
 static intr_handle_t s_timer_handle_knxtx;
@@ -71,8 +77,9 @@ static unsigned char calc_odd_horizontal_parity_byte(int len, unsigned char* dat
     return (~tmp & 0xFF);
 }
 
-#define SENDBUFFER_LEN 8
-static unsigned char sendbuffer[100] = {
+static int send_telegramm_length = 8;
+
+static unsigned char sendbuffer[KNX_TELEGRAM_MAX_SIZE] = {
     0xBC, // knx control byte
     0x12, 0x03, 0x58, 0x03, 0xE1, 0x00, 0x81,
     0x69 // knx checksum calc_odd_horizontal_parity_byte()
@@ -86,6 +93,9 @@ static void isr_knx_tx_timer(void* arg)
     TIMERG1.int_clr_timers.t1 = 1;
     TIMERG1.hw_timer[1].config.alarm_en = 1;
 
+    if (send_telegramm_length == 0)
+        return;
+
     waitcount++;
     if (waitcount == 2) {
         gpio_set_level((gpio_num_t)PIN_KNX_TX, 0);
@@ -96,18 +106,16 @@ static void isr_knx_tx_timer(void* arg)
         return;
     }
 
-    if (tmp_sendbyte > SENDBUFFER_LEN) {
+    if (tmp_sendbyte > send_telegramm_length) {
         // frame done.
 
         // wait "some" bits
         bits_send=-30;  // determined empirically
         tmp_sendbyte = 0;
+        send_telegramm_length = 0;
         sendcount++;
     }
 
-    if (sendcount == 2) {
-        return;
-    }
 
     char octet = sendbuffer[tmp_sendbyte];
 
@@ -280,8 +288,6 @@ static void IRAM_ATTR gpio_isr_handler(void* arg)
 }
 
 
-#define ROUTING_FIELD_PAYLOAD_LENGTH_MASK      0x00001111
-
 unsigned int payload_length(struct KNX_TP1_Frame *frame)
 {
     return (frame->routing_counter & ROUTING_FIELD_PAYLOAD_LENGTH_MASK);
@@ -297,8 +303,10 @@ static void task_knxrx(void* arg)
 
         int index_start_frame=-1;
         int index_end_frame=-1;
+        esp_task_wdt_reset();
 
-        if (pdTRUE == xQueueReceive(queue_knxrx, &byDummy, portMAX_DELAY))
+        if (pdTRUE == xQueueReceive(queue_knxrx, &byDummy, 10000 / portTICK_RATE_MS))
+        //portMAX_DELAY))
         {
             // print received bytes.
             //for (; octets_printed < current_octet; octets_printed++) {
@@ -329,6 +337,7 @@ static void task_knxrx(void* arg)
                         break;
                     }
                 }
+                esp_task_wdt_reset();
             }
 
             if (index_start_frame>0 && index_end_frame>0) {
@@ -338,7 +347,9 @@ static void task_knxrx(void* arg)
                 for (byte i=0; i<index_end_frame+1; i++)
                     telegram.WriteRawByte(octets[index_start_frame+i], i);
 
+                esp_task_wdt_reset();
                 func_knx_frame_received(telegram);
+                esp_task_wdt_reset();
 
                 /*struct KNX_TP1_Frame *frame = malloc(sizeof(*frame));
                 frame -> control_r =        (octets[index_start_frame + 0] & 0x20) > 0;
@@ -389,6 +400,7 @@ static void task_knxrx(void* arg)
 
             }
         }
+        esp_task_wdt_reset();
     }
 }
 
@@ -398,21 +410,24 @@ static void task_knxtx(void* arg)
         // not needed. killme.
         int byDummy=0;
 
-        if( pdTRUE == xQueueReceive( queue_knxtx, &byDummy, portMAX_DELAY) )
+        if( pdTRUE == xQueueReceive( queue_knxtx, &byDummy, 10000 / portTICK_RATE_MS))
+        //portMAX_DELAY) )
         {
             //printf("task_knxtx...\n");
         }
+        esp_task_wdt_reset();
+        vTaskDelay(50 / portTICK_RATE_MS);
     }
 }
 
 static void task_knx_send(void* arg)
 {
-
     init_knx_tx_timer();
     timer_start(TIMER_GROUP_1, TIMER_1);
 
     for (;;) {
 
+        esp_task_wdt_reset();
         vTaskDelay(10000 / portTICK_RATE_MS);
     }
 }
@@ -440,6 +455,7 @@ static void setup_knx_tx_pin() {
     gpio_config(&io_conf);
 }
 
+
 void setup_knx_reading(void (*knx_frame_received)(KnxTelegram &telegram))
 {
     func_knx_frame_received = knx_frame_received;
@@ -447,7 +463,9 @@ void setup_knx_reading(void (*knx_frame_received)(KnxTelegram &telegram))
     setup_knx_rx_pin();
 
     queue_knxrx = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(task_knxrx, "task_knxrx", 2048, NULL, 10, NULL);
+
+    xTaskCreatePinnedToCore(task_knxrx, "task_knxrx", STKNX_LOOP_STACK, NULL, 10, &knxRxHandle, STKNX_CORE);
+    esp_task_wdt_add(knxRxHandle);
 
     init_knx_rx_timer();
 
@@ -456,11 +474,42 @@ void setup_knx_reading(void (*knx_frame_received)(KnxTelegram &telegram))
     gpio_isr_handler_add((gpio_num_t)PIN_KNX_RX, gpio_isr_handler, (void*) PIN_KNX_RX);
 }
 
-void setup_knx_writing() {
+void setup_knx_writing()
+{
     setup_knx_tx_pin();
 
-    queue_knxtx = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(task_knxtx, "task_knxtx", 2048, NULL, 10, NULL);
+    //queue_knxtx = xQueueCreate(10, sizeof(uint32_t));
+    //xTaskCreate(task_knxtx, "task_knxtx", 2048, NULL, 10, NULL);
 
-    xTaskCreate(task_knx_send, "task_knx_send", 2048, NULL, 10, NULL);
+    xTaskCreate(task_knx_send, "task_knx_send", STKNX_LOOP_STACK, NULL, 10, NULL);
+    //xTaskCreatePinnedToCore(task_knx_send, "task_knx_send", STKNX_LOOP_STACK, NULL, 9, &knxTxHandle, STKNX_CORE);
+    //esp_task_wdt_add(knxTxHandle);
+}
+
+
+unsigned char stknx_send_telegram(unsigned char* rawtelegram, int len)
+{
+    //return 0;
+    if (len <= 0) {
+        printf("stknx invalid len zero\n");
+        return 1;
+    }
+
+    if (send_telegramm_length != 0 || tmp_sendbyte != 0) {
+        printf("stknx send telegram busy\n");
+        return 2;
+    }
+
+    memcpy(sendbuffer, rawtelegram, len);
+
+    // store telegram len
+    send_telegramm_length = len;
+    tmp_sendbyte = 0;
+
+    /*
+    printf("stknx copied to sendbuffer: %02X %02X %02X %02X %02X %02X %02X %02X ...\n",
+        sendbuffer[0], sendbuffer[1], sendbuffer[2], sendbuffer[3],
+        sendbuffer[4], sendbuffer[5], sendbuffer[6], sendbuffer[7]);*/
+
+    return 0;
 }

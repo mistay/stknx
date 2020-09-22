@@ -26,6 +26,8 @@ extern "C"
 void setup_knx_reading(void (*knx_frame_received)(KnxTelegram &telegram));
 void setup_knx_writing();
 
+unsigned char stknx_send_telegram(unsigned char* rawtelegram, int len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -14,8 +14,11 @@
 #include "knx_tp1_frame.h"
 #include "esp_heap_caps.h"
 #include <Arduino.h>
-#include <KnxTelegram.h>
 #include "stknx.h"
+#include "esp_task_wdt.h"
+#include "KnxDevice.h"
+#include <KnxTelegram.h>
+
 
 #define PIN_LED_0                       5
 #define PIN_LED_1                       19
@@ -100,6 +103,9 @@ void knx_frame_received(KnxTelegram &telegram) {
         telegram.GetFirstPayloadByte(),
         payload[0], telegram.GetPayloadLength());
 
+    // pass to knx to allow further process in knxEvent
+    Knx.setExternalRxTelegram(telegram);
+
 
     /*printf("->main->KNXFRAME: [");
 
@@ -135,13 +141,86 @@ void knx_frame_received(KnxTelegram &telegram) {
     fflush(stdout);*/
 }
 
+#define MAX_COMOBJECTS 40
+#define DUMMYSERIAL Serial1
+
+KnxComObject** dynComObjects = 0;
+int numberObjects = 0;
+int testIndex = 0;
+
+unsigned char knxTxHandler(KnxTelegram *telegram)
+{
+    unsigned char err;
+    unsigned char rawTelegram[KNX_TELEGRAM_MAX_SIZE];
+    for (int i = 0; i < telegram->GetTelegramLength(); i++)
+        rawTelegram[i] = telegram->ReadRawByte(i);
+
+    printf("stknx_send ...\n");
+    err = stknx_send_telegram(rawTelegram, telegram->GetTelegramLength());
+    printf("stknx_send done\n");
+
+    return err;
+}
+
 void setup()
 {
     setup_leds();
     blink_all_leds();
 
+    esp_task_wdt_init(30, true);
+    esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
+    esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(1));
+
+
+    dynComObjects = new KnxComObject*[MAX_COMOBJECTS];
+    dynComObjects[numberObjects++] = new KnxComObject(
+            G_ADDR(1,1,60),
+            KNX_DPT_1_001,
+            COM_OBJ_SENSOR | COM_OBJ_LOGIC_IN);
+
+    dynComObjects[numberObjects++] = new KnxComObject(
+            G_ADDR(1,4,60),
+            KNX_DPT_1_001,
+            COM_OBJ_LOGIC_IN | COM_OBJ_LOGIC_IN_INIT);
+
+    dynComObjects[numberObjects++] = new KnxComObject(
+            G_ADDR(4,4,42),
+            KNX_DPT_1_001,
+            COM_OBJ_LOGIC_IN | COM_OBJ_LOGIC_IN_INIT);
+    // Note:
+    // Mdt1WireTempSensor: KNX_DPT_9_001
+    // MdtDhtHumiditySensorKNX_DPT_1_001 or KNX_DPT_9_007 not working)
+
+    Knx.setTransmitCallback(knxTxHandler);
+
+    Knx.begin(DUMMYSERIAL,
+      P_ADDR(1, 0, 242),
+      dynComObjects, numberObjects);
+
     setup_knx_reading(knx_frame_received);
     setup_knx_writing();
+
+    printf("setup done\n");
+}
+
+static int testValue = 0;
+
+void knxEvents(byte index)
+{
+
+    if (index == 2) {
+        printf("knxEvents for trigger received: %d ...\n", index);
+
+        printf("Sending KnxTelegram ...\n");
+        if (!testValue)
+            testValue = 1;
+        else
+            testValue = 0;
+        Knx.write(testIndex, (int) testValue);
+
+        printf("Sending KnxTelegram done\n");
+    } else
+        printf("knxEvents received. Index: %d\n", index);
 }
 
 void loop()
@@ -151,6 +230,10 @@ void loop()
 
     int delay = 5000;
     while(1) {
+        printf("Knx.task() ...\n");
+        Knx.task();
+        printf("Knx.task() done\n");
+
         vTaskDelay(delay / portTICK_RATE_MS);
         uptime++;
 
@@ -160,5 +243,13 @@ void loop()
         int day = ( uptime * delay / 1000 / 60 / 60 / 24 ) % 24;
 
         printf("heap_caps_get_free_size %dbytes read:%d write:%d uptime:%ddays %dh %d' %d\" ...\n", heap_caps_get_free_size(MALLOC_CAP_8BIT), octet_read_index, octet_write_index, day, hour, min, sec);*/
+
+        /*printf("Sending KnxTelegram ...\n");
+        if (!testValue)
+            testValue = 1;
+        else
+            testValue = 0;
+        Knx.write(testIndex, (int) testValue);
+        printf("Sending KnxTelegram done\n");*/
     }
 }
