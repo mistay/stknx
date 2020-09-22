@@ -335,14 +335,8 @@ static void task_knxrx(void* arg)
                 octet_read_index = index_end_frame;
 
                 KnxTelegram telegram;
-                for (byte i=0; i<8; i++)
+                for (byte i=0; i<index_end_frame+1; i++)
                     telegram.WriteRawByte(octets[index_start_frame+i], i);
-
-                if (telegram.IsChecksumCorrect()) {
-                    telegram.SetLongPayload(
-                        &octets[index_end_frame+1-telegram.GetPayloadLength()],
-                        telegram.GetPayloadLength());
-                }
 
                 func_knx_frame_received(telegram);
 
