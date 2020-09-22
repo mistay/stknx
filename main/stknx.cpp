@@ -298,7 +298,7 @@ static void task_knxrx(void* arg)
         int index_start_frame=-1;
         int index_end_frame=-1;
 
-        if( pdTRUE == xQueueReceive( queue_knxrx, &byDummy, portMAX_DELAY) )
+        if (pdTRUE == xQueueReceive(queue_knxrx, &byDummy, portMAX_DELAY))
         {
             // print received bytes.
             //for (; octets_printed < current_octet; octets_printed++) {
@@ -323,7 +323,7 @@ static void task_knxrx(void* arg)
                 if (index_start_frame >= 0) {
                     tmp ^= octets[j];
 
-                    if ( (~tmp & 0xFF) == octets[j] ) {
+                    if ( ((~tmp) & 0xFF) == octets[j] ) {
                         index_end_frame=j;
                         horizontal_parity = ~tmp;
                         break;
