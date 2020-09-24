@@ -88,6 +88,7 @@ static unsigned char sendbuffer[KNX_TELEGRAM_MAX_SIZE] = {
 static void isr_knx_tx_timer(void* arg)
 {
     portBASE_TYPE xHigherPriorityTaskWoken;
+    static int errorcount = 0;
 
     // re-enable timer
     TIMERG1.int_clr_timers.t1 = 1;
@@ -116,6 +117,12 @@ static void isr_knx_tx_timer(void* arg)
         sendcount++;
     }
 
+    if (tmp_sendbyte >= sizeof(sendbuffer)) {
+        bits_send=-30;
+        tmp_sendbyte = 0;
+        send_telegramm_length = 0;
+        errorcount++;
+    }
 
     char octet = sendbuffer[tmp_sendbyte];
 

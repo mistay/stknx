@@ -86,12 +86,8 @@ void knx_frame_received(KnxTelegram &telegram) {
         gpio_set_level((gpio_num_t)PIN_LED_4_CLONE_LIGHT, frame.first_databyte & 0x1);
     }*/
 
-    byte payload[16] = {0};
-    telegram.GetLongPayload(payload,
-        mmin(telegram.GetPayloadLength(),sizeof(payload)));
-
     printf("Telegram Chksum ok: %d, %d.%d.%d -> %d/%d/%d = Command: %d,"
-        " FirstPayloadByte: %x, payload: %x, payloadLen: %d\n",
+        " FirstPayloadByte: %x, payloadLen: %d\n",
         telegram.IsChecksumCorrect(),
         P_AREA(telegram.GetSourceAddress()),
         P_LINE(telegram.GetSourceAddress()),
@@ -100,11 +96,11 @@ void knx_frame_received(KnxTelegram &telegram) {
         G_MID(telegram.GetTargetAddress()),
         G_SUB(telegram.GetTargetAddress()),
         telegram.GetCommand(),
-        telegram.GetFirstPayloadByte(),
-        payload[0], telegram.GetPayloadLength());
+        telegram.GetFirstPayloadByte(), telegram.GetPayloadLength());
 
     // pass to knx to allow further process in knxEvent
-    Knx.setExternalRxTelegram(telegram);
+    if (telegram.IsChecksumCorrect())
+        Knx.setExternalRxTelegram(telegram);
 
 
     /*printf("->main->KNXFRAME: [");
@@ -155,7 +151,7 @@ unsigned char knxTxHandler(KnxTelegram *telegram)
     for (int i = 0; i < telegram->GetTelegramLength(); i++)
         rawTelegram[i] = telegram->ReadRawByte(i);
 
-    printf("stknx_send ...\n");
+    printf("stknx_send ..., checksum ok: %d\n", telegram->IsChecksumCorrect());
     err = stknx_send_telegram(rawTelegram, telegram->GetTelegramLength());
     printf("stknx_send done\n");
 
@@ -228,11 +224,9 @@ void loop()
     printf("Waiting for KNX Frames ...\n");
     long uptime = 0;
 
-    int delay = 5000;
+    int delay = 100;
     while(1) {
-        printf("Knx.task() ...\n");
         Knx.task();
-        printf("Knx.task() done\n");
 
         vTaskDelay(delay / portTICK_RATE_MS);
         uptime++;
