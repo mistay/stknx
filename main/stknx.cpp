@@ -312,8 +312,8 @@ static void task_knxrx(void* arg)
         int index_end_frame=-1;
         esp_task_wdt_reset();
 
-        if (pdTRUE == xQueueReceive(queue_knxrx, &byDummy, 10000 / portTICK_RATE_MS))
-        //portMAX_DELAY))
+        //if (pdTRUE == xQueueReceive(queue_knxrx, &byDummy, 10000 / portTICK_RATE_MS))
+        if (pdTRUE == xQueueReceive(queue_knxrx, &byDummy, portMAX_DELAY))
         {
             // print received bytes.
             //for (; octets_printed < current_octet; octets_printed++) {
@@ -472,7 +472,6 @@ void setup_knx_reading(void (*knx_frame_received)(KnxTelegram &telegram))
     queue_knxrx = xQueueCreate(10, sizeof(uint32_t));
 
     xTaskCreatePinnedToCore(task_knxrx, "task_knxrx", STKNX_LOOP_STACK, NULL, 10, &knxRxHandle, STKNX_CORE);
-    esp_task_wdt_add(knxRxHandle);
 
     init_knx_rx_timer();
 
