@@ -24,8 +24,8 @@
 static xQueueHandle queue_knxrx = NULL;
 static xQueueHandle queue_knxtx = NULL;
 
-#define STKNX_LOOP_STACK 8192
-#define STKNX_CORE 1
+#define STKNX_LOOP_STACK 2048
+#define STKNX_CORE 0
 static TaskHandle_t knxRxHandle = NULL;
 static TaskHandle_t knxTxHandle = NULL;
 
@@ -433,7 +433,6 @@ static void task_knx_send(void* arg)
     timer_start(TIMER_GROUP_1, TIMER_1);
 
     for (;;) {
-
         esp_task_wdt_reset();
         vTaskDelay(10000 / portTICK_RATE_MS);
     }
@@ -486,9 +485,9 @@ void setup_knx_writing()
 
     //queue_knxtx = xQueueCreate(10, sizeof(uint32_t));
     //xTaskCreate(task_knxtx, "task_knxtx", 2048, NULL, 10, NULL);
+    //xTaskCreate(task_knx_send, "task_knx_send", STKNX_LOOP_STACK, NULL, 10, NULL);
 
-    xTaskCreate(task_knx_send, "task_knx_send", STKNX_LOOP_STACK, NULL, 10, NULL);
-    //xTaskCreatePinnedToCore(task_knx_send, "task_knx_send", STKNX_LOOP_STACK, NULL, 9, &knxTxHandle, STKNX_CORE);
+    xTaskCreatePinnedToCore(task_knx_send, "task_knx_send", STKNX_LOOP_STACK, NULL, 10, &knxTxHandle, STKNX_CORE);
     //esp_task_wdt_add(knxTxHandle);
 }
 
