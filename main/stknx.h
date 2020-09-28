@@ -1,7 +1,8 @@
 
 
-#ifndef STKNX_H
-#define STKNX_H
+#ifndef STKNXLIB_H
+#define STKNXLIB_H
+
 
 #include <KnxTelegram.h>
 #include "knx_tp1_frame.h"
@@ -32,4 +33,4 @@ unsigned char stknx_send_telegram(unsigned char* rawtelegram, int len);
 }
 #endif
 
-#endif //STKNX_H
+#endif //STKNXLIB_H

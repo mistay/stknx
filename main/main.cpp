@@ -100,7 +100,7 @@ void knx_frame_received(KnxTelegram &telegram) {
 
     // pass to knx to allow further process in knxEvent
     if (telegram.IsChecksumCorrect())
-        Knx.setExternalRxTelegram(telegram);
+        Knx.setReceivedTelegram(telegram);
 
 
     /*printf("->main->KNXFRAME: [");
@@ -187,9 +187,7 @@ void setup()
     // Mdt1WireTempSensor: KNX_DPT_9_001
     // MdtDhtHumiditySensorKNX_DPT_1_001 or KNX_DPT_9_007 not working)
 
-    Knx.setTransmitCallback(knxTxHandler);
-
-    Knx.begin(DUMMYSERIAL,
+    Knx.begin(knxTxHandler,
       P_ADDR(1, 0, 242),
       dynComObjects, numberObjects);
 
